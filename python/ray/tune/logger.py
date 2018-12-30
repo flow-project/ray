@@ -3,6 +3,7 @@ from __future__ import division
 from __future__ import print_function
 
 import csv
+import dill
 import json
 import logging
 import numpy as np
@@ -146,6 +147,10 @@ class _JsonLogger(Logger):
                         f)
         local_file = os.path.join(self.logdir, "result.json")
         self.local_out = open(local_file, "w")
+
+        config_pkl = os.path.join(self.logdir, "params.pkl")
+        with open(config_pkl, "wb") as f:
+            dill.dump(self.config, f)
 
     def on_result(self, result):
         json.dump(result, self, cls=_SafeFallbackEncoder)
