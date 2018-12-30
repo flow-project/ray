@@ -9,8 +9,11 @@ import logging
 import numpy as np
 import os
 import yaml
+import distutils.version
 
+import ray.cloudpickle as cloudpickle
 from ray.tune.log_sync import get_syncer
+from ray.cloudpickle import cloudpickle
 from ray.tune.result import NODE_IP, TRAINING_ITERATION, TIME_TOTAL_S, \
     TIMESTEPS_TOTAL
 
@@ -18,17 +21,26 @@ logger = logging.getLogger(__name__)
 
 try:
     import tensorflow as tf
+    use_tf150_api = (distutils.version.LooseVersion(tf.VERSION) >=
+                     distutils.version.LooseVersion("1.5.0"))
 except ImportError:
     tf = None
+    use_tf150_api = True
     logger.warning("Couldn't import TensorFlow - "
                    "disabling TensorBoard logging.")
 
 
 class Logger(object):
-    """Logging interface for ray.tune; specialized implementations follow.
+    """Logging interface for ray.tune.
 
     By default, the UnifiedLogger implementation is used which logs results in
-    multiple formats (TensorBoard, rllab/viskit, plain json) at once.
+    multiple formats (TensorBoard, rllab/viskit, plain json, custom loggers)
+    at once.
+
+    Arguments:
+        config: Configuration passed to all logger creators.
+        logdir: Directory for all logger creators to log to.
+        upload_uri (str): Optional URI where the logdir is sync'ed to.
     """
 
     def __init__(self, config, logdir, upload_uri=None):
@@ -59,17 +71,41 @@ class Logger(object):
 class UnifiedLogger(Logger):
     """Unified result logger for TensorBoard, rllab/viskit, plain json.
 
-    This class also periodically syncs output to the given upload uri."""
+    This class also periodically syncs output to the given upload uri.
+
+    Arguments:
+        config: Configuration passed to all logger creators.
+        logdir: Directory for all logger creators to log to.
+        upload_uri (str): Optional URI where the logdir is sync'ed to.
+        custom_loggers (list): List of custom logger creators.
+        sync_function (func|str): Optional function for syncer to run.
+            See ray/python/ray/tune/log_sync.py
+    """
+
+    def __init__(self,
+                 config,
+                 logdir,
+                 upload_uri=None,
+                 custom_loggers=None,
+                 sync_function=None):
+        self._logger_list = [_JsonLogger, _TFLogger, _VisKitLogger]
+        self._sync_function = sync_function
+        if custom_loggers:
+            assert isinstance(custom_loggers, list), "Improper custom loggers."
+            self._logger_list += custom_loggers
+
+        Logger.__init__(self, config, logdir, upload_uri)
 
     def _init(self):
         self._loggers = []
-        for cls in [_JsonLogger, _TFLogger, _VisKitLogger]:
-            if cls is _TFLogger and tf is None:
-                logger.info("TF not installed - "
-                            "cannot log with {}...".format(cls))
-                continue
-            self._loggers.append(cls(self.config, self.logdir, self.uri))
-        self._log_syncer = get_syncer(self.logdir, self.uri)
+        for cls in self._logger_list:
+            try:
+                self._loggers.append(cls(self.config, self.logdir, self.uri))
+            except Exception:
+                logger.exception("Could not instantiate {} - skipping.".format(
+                    str(cls)))
+        self._log_syncer = get_syncer(
+            self.logdir, self.uri, sync_function=self._sync_function)
 
     def on_result(self, result):
         for logger in self._loggers:
@@ -104,6 +140,11 @@ class _JsonLogger(Logger):
                 indent=2,
                 sort_keys=True,
                 cls=_SafeFallbackEncoder)
+        pkl_out = os.path.join(self.logdir, "params.pkl")
+        with open(config_out, "wb") as f:
+            cloudpickle.dump(
+                        self.config,
+                        f)
         local_file = os.path.join(self.logdir, "result.json")
         self.local_out = open(local_file, "w")
 
@@ -127,7 +168,11 @@ def to_tf_values(result, path):
     values = []
     for attr, value in result.items():
         if value is not None:
-            if type(value) in [int, float, np.float32, np.float64, np.int32]:
+            if use_tf150_api:
+                type_list = [int, float, np.float32, np.float64, np.int32]
+            else:
+                type_list = [int, float]
+            if type(value) in type_list:
                 values.append(
                     tf.Summary.Value(
                         tag="/".join(path + [attr]), simple_value=value))

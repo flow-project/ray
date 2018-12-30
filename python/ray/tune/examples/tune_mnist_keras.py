@@ -187,15 +187,19 @@ if __name__ == '__main__':
                 },
                 "run": "train_mnist",
                 "num_samples": 1 if args.smoke_test else 10,
-                "trial_resources": {
+                "resources_per_trial": {
                     "cpu": args.threads,
                     "gpu": 0.5 if args.use_gpu else 0
                 },
                 "config": {
-                    "lr": lambda spec: np.random.uniform(0.001, 0.1),
-                    "momentum": lambda spec: np.random.uniform(0.1, 0.9),
-                    "hidden": lambda spec: np.random.randint(32, 512),
-                    "dropout1": lambda spec: np.random.uniform(0.2, 0.8),
+                    "lr": tune.sample_from(
+                        lambda spec: np.random.uniform(0.001, 0.1)),
+                    "momentum": tune.sample_from(
+                        lambda spec: np.random.uniform(0.1, 0.9)),
+                    "hidden": tune.sample_from(
+                        lambda spec: np.random.randint(32, 512)),
+                    "dropout1": tune.sample_from(
+                        lambda spec: np.random.uniform(0.2, 0.8)),
                 }
             }
         },

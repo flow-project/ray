@@ -145,13 +145,13 @@ class TrainMNIST(Trainable):
             output = self.model(data)
 
             # sum up batch loss
-            test_loss += F.nll_loss(output, target, size_average=False).data[0]
+            test_loss += F.nll_loss(output, target, size_average=False).item()
 
             # get the index of the max log-probability
             pred = output.data.max(1, keepdim=True)[1]
             correct += pred.eq(target.data.view_as(pred)).long().cpu().sum()
 
-        test_loss = test_loss.item() / len(self.test_loader.dataset)
+        test_loss = test_loss / len(self.test_loader.dataset)
         accuracy = correct.item() / len(self.test_loader.dataset)
         return {"mean_loss": test_loss, "mean_accuracy": accuracy}
 
@@ -187,7 +187,7 @@ if __name__ == '__main__':
                     "mean_accuracy": 0.95,
                     "training_iteration": 1 if args.smoke_test else 20,
                 },
-                "trial_resources": {
+                "resources_per_trial": {
                     "cpu": 3
                 },
                 "run": TrainMNIST,
@@ -195,8 +195,10 @@ if __name__ == '__main__':
                 "checkpoint_at_end": True,
                 "config": {
                     "args": args,
-                    "lr": lambda spec: np.random.uniform(0.001, 0.1),
-                    "momentum": lambda spec: np.random.uniform(0.1, 0.9),
+                    "lr": tune.sample_from(
+                        lambda spec: np.random.uniform(0.001, 0.1)),
+                    "momentum": tune.sample_from(
+                        lambda spec: np.random.uniform(0.1, 0.9)),
                 }
             }
         },

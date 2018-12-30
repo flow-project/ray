@@ -20,30 +20,46 @@ APEX-DQN        **Yes** `+parametric`_  No                  **Yes**      No
 APEX-DDPG       No                      **Yes**             **Yes**      No
 ES              **Yes**                 **Yes**             No           No
 ARS             **Yes**                 **Yes**             No           No
+QMIX            **Yes**                 No                  **Yes**      **Yes**
 =============  =======================  ==================  ===========  ==================
 
 .. _`+parametric`: rllib-models.html#variable-length-parametric-action-spaces
 
-In the high-level agent APIs, environments are identified with string names. By default, the string will be interpreted as a gym `environment name <https://gym.openai.com/envs>`__, however you can also register custom environments by name:
+You can pass either a string name or a Python class to specify an environment. By default, strings will be interpreted as a gym `environment name <https://gym.openai.com/envs>`__. Custom env classes passed directly to the agent must take a single ``env_config`` parameter in their constructor:
 
 .. code-block:: python
 
-    import ray
-    from ray.tune.registry import register_env
+    import gym, ray
     from ray.rllib.agents import ppo
 
-    def env_creator(env_config):
-        import gym
-        return gym.make("CartPole-v0")  # or return your own custom env
+    class MyEnv(gym.Env):
+        def __init__(self, env_config):
+            self.action_space = <gym.Space>
+            self.observation_space = <gym.Space>
+        def reset(self):
+            return <obs>
+        def step(self, action):
+            return <obs>, <reward: float>, <done: bool>, <info: dict>
 
-    register_env("my_env", env_creator)
     ray.init()
-    trainer = ppo.PPOAgent(env="my_env", config={
-        "env_config": {},  # config to pass to env creator
+    trainer = ppo.PPOAgent(env=MyEnv, config={
+        "env_config": {},  # config to pass to env class
     })
 
     while True:
         print(trainer.train())
+
+You can also register a custom env creator function with a string name. This function must take a single ``env_config`` parameter and return an env instance:
+
+.. code-block:: python
+
+    from ray.tune.registry import register_env
+
+    def env_creator(env_config):
+        return MyEnv(...)  # return an env instance
+
+    register_env("my_env", env_creator)
+    trainer = ppo.PPOAgent(env="my_env")
 
 Configuring Environments
 ------------------------
@@ -94,6 +110,10 @@ RLlib will auto-vectorize Gym envs for batch evaluation if the ``num_envs_per_wo
 
 Multi-Agent
 -----------
+
+.. note::
+
+   Learn more about multi-agent reinforcement learning in RLlib by reading the `blog post <https://bair.berkeley.edu/blog/2018/12/12/rllib/>`__.
 
 A multi-agent environment is one which has multiple acting entities per step, e.g., in a traffic simulation, there may be multiple "car" and "traffic light" agents in the environment. The model for multi-agent in RLlib as follows: (1) as a user you define the number of policies available up front, and (2) a function that maps agent ids to policy ids. This is summarized by the below figure:
 
@@ -182,6 +202,16 @@ Here is a simple `example training script <https://github.com/ray-project/ray/bl
         policy_1: 21.798387096774192
 
 To scale to hundreds of agents, MultiAgentEnv batches policy evaluations across multiple agents internally. It can also be auto-vectorized by setting ``num_envs_per_worker > 1``.
+
+Grouping Agents
+~~~~~~~~~~~~~~~
+
+It is common to have groups of agents in multi-agent RL. RLlib treats agent groups like a single agent with a Tuple action and observation space. The group agent can then be assigned to a single policy for centralized execution, or to specialized multi-agent policies such as `Q-Mix <rllib-algorithms.html#qmix-monotonic-value-factorisation-qmix-vdn-iqn>`__ that implement centralized training but decentralized execution. You can use the ``MultiAgentEnv.with_agent_groups()`` method to define these groups:
+
+.. literalinclude:: ../../python/ray/rllib/env/multi_agent_env.py
+   :language: python
+   :start-after: __grouping_doc_begin__
+   :end-before: __grouping_doc_end__
 
 Variable-Sharing Between Policies
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
